@@ -1,0 +1,76 @@
+name: ragproof
+description: Fail the build when your RAG pipeline's answers stop being faithful to the retrieved context.
+author: Doruk Maltepe
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  dataset:
+    description: Path to the JSONL dataset of cases (contexts + answer).
+    required: true
+  scorers:
+    description: Space-separated scorers to run (hhem, lettucedetect, minicheck, lexical).
+    default: hhem
+  extras:
+    description: Comma-separated pip extras to install, e.g. "hhem,lettucedetect". Empty for none.
+    default: hhem
+  threshold:
+    description: Minimum score for a case to pass.
+    default: "0.5"
+  min-pass-rate:
+    description: Fail if any scorer's pass rate falls below this.
+    default: "1.0"
+  baseline:
+    description: Optional JSON report from the base branch to compare against.
+    default: ""
+  max-drop:
+    description: Fail if a scorer's mean drops more than this versus the baseline.
+    default: "0.02"
+  report:
+    description: Where to write the JSON report.
+    default: ragproof-report.json
+  python-version:
+    description: Python version to run ragproof with.
+    default: "3.12"
+
+outputs:
+  report:
+    description: Path to the JSON report.
+    value: ${{ inputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install ragproof
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        EXTRAS: ${{ inputs.extras }}
+      run: |
+        if [ -n "$EXTRAS" ]; then
+          python -m pip install "ragproof[${EXTRAS}] @ file://${ACTION_PATH}"
+        else
+          python -m pip install "ragproof @ file://${ACTION_PATH}"
+        fi
+
+    - name: Run ragproof
+      shell: bash
+      env:
+        DATASET: ${{ inputs.dataset }}
+        SCORERS: ${{ inputs.scorers }}
+        THRESHOLD: ${{ inputs.threshold }}
+        MIN_PASS_RATE: ${{ inputs.min-pass-rate }}
+        BASELINE: ${{ inputs.baseline }}
+        MAX_DROP: ${{ inputs.max-drop }}
+        REPORT: ${{ inputs.report }}
+      run: |
+        args=(eval "$DATASET" --threshold "$THRESHOLD" --min-pass-rate "$MIN_PASS_RATE"
+              --max-drop "$MAX_DROP" -o "$REPORT")
+        for s in $SCORERS; do args+=(-s "$s"); done
+        if [ -n "$BASELINE" ]; then args+=(--baseline "$BASELINE"); fi
+        ragproof "${args[@]}"
